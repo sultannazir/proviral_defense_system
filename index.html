@@ -1,0 +1,414 @@
+<html>
+<script src="./cacatoo.js"></script> <!-- Include cacatoo library (compiled with rollup) -->
+<script src="./all.js"></script> <!-- Include other libraries (concattenated in 1 file) -->
+<link rel="stylesheet" href="./cacatoo.css"> <!-- Set style sheet -->
+
+<script>
+    /*-----------------------Start user-defined code ---------------------*/
+    let sim;
+
+    iter = 1
+    mixinp = 0
+    alpha = 0.5 // initial alpha value
+
+    b = 0.05      // maximum host birth probability
+    cI = 0.0     // fractional decrease in birth probability per provirus
+    d = 0.01      // host death probability
+    beta = 0.5    // virus entry probability
+    lambda = 0.05  // integration probability  //0.1 and 0.01
+    scheme = 1
+
+    r = 0.25       // virus maximum replication probability
+    c_alpha = 0.5  // cost of cooperation
+    e = 1        // provirus excision probability
+    latency = 20   // virus replication latency period
+
+    muA = 0.001    // mutation probability during virus replication
+    step = 0.1     // Standard deviation of mutation
+    loss = 0.001   // probability of provirus loss during host reproduction
+
+    diff_rate = 0.5   // extracellular virus diffusion probability
+    decay_rate = 0.2 // extracellular virus decay probability
+
+    var size = 200
+
+    ////////////////////////////////////
+
+    function cacatoo() {
+
+      let config = {
+        title: "Virus factory model",
+        description: "Individual based model of hyperparasitism evolution",
+        maxtime: 10000000,
+        seed: 10,
+        skip: 0,
+        scale: 2,
+        ncol: size,
+        nrow: size,
+        wrap: [true, true],
+        graph_interval: 1,
+        fpsmeter: true,
+        statecolours: { alive: {'empty':'black', 'S':'white', 'I':'blue'}}
+      }
+
+      sim = new Simulation(config)
+
+      sim.makeGridmodel("host")
+      sim.makeGridmodel("ext")
+
+      //// check mixedness of simulation
+      if (mixinp == 1) sim.mixhosts = true
+      else sim.mixhosts = false
+
+      // VIRUS object
+      class Virus {
+
+        constructor(init_alpha) {
+          this.alpha = init_alpha
+        }
+
+        copy(mutate) {
+          let child = new Virus()
+          child.alpha = this.alpha
+          if (mutate) {
+            var randomnr = sim.rng.genrand_real1()
+            if (randomnr < muA) child.alpha = gaussianStep(this.alpha, step, 0, 1)
+          }
+          return child
+        }
+      }
+
+      sim.ext.diffuse_particles = function(x, y, diff_rate, decay_rate, mix) {
+        var remove_list = []
+        for (let k = 0; k < this.grid[x][y].viruses.length; k++) {
+          if (sim.rng.genrand_real1() < decay_rate){
+            remove_list.push(k)
+          }
+          else {
+            if (diff_rate > 1 || mix) {
+              var p = sim.rng.genrand_int(0,this.nc-1)
+              var q = sim.rng.genrand_int(0,this.nr-1)
+              nbr = this.grid[p][q]
+              nbr.viruses.push(this.grid[x][y].viruses[k])
+              remove_list.push(k)
+            }
+            else if (sim.rng.genrand_real1() < diff_rate){
+              nbr = this.randomMoore8(this, x, y)
+              nbr.viruses.push(this.grid[x][y].viruses[k])
+              remove_list.push(k)
+            }
+          }
+        }
+        var remove_list = new Set(remove_list)
+        this.grid[x][y].viruses = this.grid[x][y].viruses.filter((_, k) => !remove_list.has(k))
+        this.grid[x][y].density = this.grid[x][y].viruses.length
+      }
+
+      sim.createDisplay("host", "alive", "Hosts")
+      sim.createDisplay_continuous({model:"host", property:"NP", label:"Number of provirus", minval:0, maxval:10, fill:'viridis', nticks: 3, decimals: 0})
+      sim.createDisplay_continuous({model:"ext", property:"density", label:"Free virus density", minval:0, maxval:20, fill:'viridis', nticks: 3, decimals: 0})
+      sim.createDisplay_continuous({model:"ext", property:"alpha", label:"Free virus alpha", minval:0, maxval:1, fill:'viridis', nticks: 3, decimals: 2})
+
+      //////// INITIALISATION ////////////////////////////////////////////////////////////////
+      sim.initialGrid(sim.host, "alive", 'empty', "S", 1.0)
+      for (let i = 0; i < sim.host.nc; i++) for (let j = 0; j < sim.host.nr; j++){
+        sim.host.grid[i][j].provirus = []
+        if (sim.rng.genrand_real1()<0.5) sim.host.grid[i][j].provirus.push(new Virus(alpha))
+        sim.host.grid[i][j].factory = []
+        sim.host.grid[i][j].NP = 0
+      }
+
+      //Insert virus at every grid point w.p. 0.01
+      sim.initialGrid(sim.host, "clock", 0)
+      for (let i = 0; i < sim.ext.nc; i++) for (let j = 0; j < sim.ext.nr; j++) {
+        sim.ext.grid[i][j].viruses = []
+        if (sim.rng.genrand_real1() < 0.01) sim.ext.grid[i][j].viruses.push(new Virus(alpha))
+      }
+      // for (let i = 0; i < sim.ext.nc; i++) for (let j = 0; j < sim.ext.nr; j++) {
+      //   if (Math.sqrt((i - size/2)**2 + (j - size/2)**2) < 20) {
+      //     for (let v = 0; v < 100; v++) sim.ext.grid[i][j].viruses.push(new Virus(0.3, 0.01))
+      //   }
+      // }
+
+      //////// NEXT STATE FUNCTION ////////////////////////////////////////////////////////////
+      sim.host.nextState = function (i, j) {
+
+        // If host is susceptible
+        if (this.grid[i][j].alive == "S") {
+
+          // Die with probability d
+          var rand = sim.rng.genrand_real1()
+          if (rand < d) {
+            this.grid[i][j].alive = 'empty'
+            this.grid[i][j].provirus = undefined
+            this.grid[i][j].factory = undefined
+            this.grid[i][j].clock = undefined
+            this.grid[i][j].NP = undefined
+          }
+
+          else {
+
+            // Pick viruses to infect
+            var remove_list = []
+            var infection = []
+            for (let v = 0; v < sim.ext.grid[i][j].viruses.length; v++) {
+              if (sim.rng.genrand_real1() < beta){
+                infection.push(sim.ext.grid[i][j].viruses[v].copy(false))
+                remove_list.push(v)
+              }
+            }
+            var remove_list = new Set(remove_list)
+            sim.ext.grid[i][j].viruses = sim.ext.grid[i][j].viruses.filter((_, k) => !remove_list.has(k)) // remove picked viruses from the environment
+            sim.ext.grid[i][j].density = sim.ext.grid[i][j].viruses.length
+
+            // check if picked viruses can set up a virus factory
+            // if true, move all picked viruses to the factory and start clock
+            if (infection.length > 0) {
+              if (scheme == 1) { // chance of integration independent of MOI
+                if (sim.rng.genrand_real1() > lambda) {
+                  this.grid[i][j].alive = 'I'
+                  for (let v = 0; v < infection.length; v++) this.grid[i][j].factory.push(infection[v].copy(false))
+                  this.grid[i][j].clock = 1
+                }
+                else {
+                  for (let v = 0; v < infection.length; v++) {
+                    this.grid[i][j].provirus.push(infection[v].copy(false))
+                    this.grid[i][j].NP ++
+                  }
+                }
+              }
+              else if (scheme == 2) { // chance of integration decreases with MOI
+                if (sim.rng.genrand_real1() < 0.2*infection.length) {
+                  this.grid[i][j].alive = 'I'
+                  for (let v = 0; v < infection.length; v++) this.grid[i][j].factory.push(infection[v].copy(false))
+                  this.grid[i][j].clock = 1
+                }
+                else {
+                  for (let v = 0; v < infection.length; v++) {
+                    this.grid[i][j].provirus.push(infection[v].copy(false))
+                    this.grid[i][j].NP ++
+                  }
+                }
+              }
+              else if (scheme == 3) { // chance of integration increases with MOI
+                if (sim.rng.genrand_real1() > 0.2*infection.length) {
+                  this.grid[i][j].alive = 'I'
+                  for (let v = 0; v < infection.length; v++) this.grid[i][j].factory.push(infection[v].copy(false))
+                  this.grid[i][j].clock = 1
+                }
+                else {
+                  for (let v = 0; v < infection.length; v++) {
+                    this.grid[i][j].provirus.push(infection[v].copy(false))
+                    this.grid[i][j].NP ++
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // If host already has a factory
+        else if (this.grid[i][j].alive == "I") {
+
+          // check if provirus joins factory
+          for (let v = this.grid[i][j].provirus.length-1; v >= 0; v--) {
+            var rand = sim.rng.genrand_real1()
+            if (rand < e) {
+              this.grid[i][j].factory.push(this.grid[i][j].provirus[v].copy(false))
+              this.grid[i][j].provirus.splice(v, 1)
+              this.grid[i][j].NP --
+            }
+          }
+
+          // virus replication
+          this.grid[i][j].alphaAvg = 0
+          for (let v = 0; v < this.grid[i][j].factory.length; v++) this.grid[i][j].alphaAvg += this.grid[i][j].factory[v].alpha
+          this.grid[i][j].alphaAvg = this.grid[i][j].alphaAvg / this.grid[i][j].factory.length
+
+          this.grid[i][j].offspring = []
+          for (let v = 0; v < this.grid[i][j].factory.length; v++) {
+            if (sim.rng.genrand_real1() < r*this.grid[i][j].alphaAvg*(1-c_alpha*this.grid[i][j].factory[v].alpha)) this.grid[i][j].offspring.push(this.grid[i][j].factory[v].copy(true))
+          }
+
+          for (let v = 0; v < this.grid[i][j].offspring.length; v++) this.grid[i][j].factory.push(this.grid[i][j].offspring[v].copy(false))
+
+          this.grid[i][j].clock ++
+
+          if (this.grid[i][j].clock == latency) {
+            for (let v = 0; v < this.grid[i][j].factory.length; v++) sim.ext.grid[i][j].viruses.push(this.grid[i][j].factory[v].copy(false))
+            this.grid[i][j].alive = 'empty'
+            this.grid[i][j].provirus = undefined
+            this.grid[i][j].factory = undefined
+            this.grid[i][j].clock = undefined
+            this.grid[i][j].NP = undefined
+          }
+
+        }
+
+
+        else {
+
+          // host reproduction into empty grid point
+          var nbr = this.randomMoore8(this, i, j)
+          if (nbr.alive == 'S') {
+            if (sim.rng.genrand_real1() < b*(1-cI*nbr.provirus.length)) {
+              this.grid[i][j].alive = 'S'
+              this.grid[i][j].provirus = []
+              this.grid[i][j].factory = []
+              this.grid[i][j].clock = 0
+              for (let v = 0; v < nbr.provirus.length; v++) {
+                // lose provirus with probability
+                if (sim.rng.genrand_real1() >= loss) this.grid[i][j].provirus.push(nbr.provirus[v].copy(true))
+              }
+              this.grid[i][j].NP = this.grid[i][j].provirus.length
+            }
+          }
+        }
+
+      }
+
+      sim.ext.nextState = function(i, j) {
+        this.diffuse_particles(i, j, diff_rate, decay_rate, sim.mixhosts)
+        if (this.grid[i][j].viruses.length > 0) {
+          this.grid[i][j].viruses = shuffle(this.grid[i][j].viruses)
+          this.grid[i][j].alpha = this.grid[i][j].viruses[0].alpha
+        }
+        else this.grid[i][j].alpha = undefined
+      }
+
+      sim.host.update = function() {
+        if(sim.mixhosts) sim.host.perfectMix()
+        this.synchronous()
+        // this.MargolusDiffusion()
+        if (sim.time%1000==0) {
+          var provirus_alpha = []
+          var virion_alpha = []
+          var provirus_lambda = []
+          var virion_lambda = []
+          var num_provirus = []
+          for (let i = 0; i < sim.host.nc; i++) for (let j = 0; j < sim.host.nr; j++){
+            if (this.grid[i][j].alive == 'S') {
+              for (let v = 0; v < this.grid[i][j].provirus.length; v++) {
+                provirus_alpha.push(this.grid[i][j].provirus[v].alpha)
+                provirus_lambda.push(this.grid[i][j].provirus[v].lambda)
+              }
+              num_provirus.push(this.grid[i][j].provirus.length)
+            }
+            for (let v = 0; v < sim.ext.grid[i][j].viruses.length; v++) {
+              virion_alpha.push(sim.ext.grid[i][j].viruses[v].alpha)
+              virion_lambda.push(sim.ext.grid[i][j].viruses[v].lambda)
+            }
+          }
+          provirus_alpha = shuffle(provirus_alpha)
+          provirus_alpha.slice(0,100)
+          provirus_lambda = shuffle(provirus_lambda)
+          provirus_lambda.slice(0,100)
+          num_provirus = shuffle(num_provirus)
+          num_provirus.slice(0,100)
+          virion_alpha = shuffle(virion_alpha)
+          virion_alpha.slice(0,100)
+          virion_lambda = shuffle(virion_lambda)
+          virion_lambda.slice(0,100)
+
+
+          this.plotPoints(num_provirus, "Number of provirus per cell", {
+          labelsDivWidth: 0,
+          width: 350,
+          })
+
+          this.plotPoints(virion_alpha, "Virus alpha distribution", {
+          labelsDivWidth: 0,
+          width: 350,
+          })
+
+          this.plotPoints(provirus_alpha, "Provirus alpha distribution", {
+          labelsDivWidth: 0,
+          width: 350,
+          })
+
+          // this.plotPoints(provirus_lambda, "Average provirus lambda", {
+          // labelsDivWidth: 0,
+          // width: 350,
+          // })
+
+          // this.plotPoints(virion_lambda, "Average virion lambda", {
+          // labelsDivWidth: 0,
+          // width: 350,
+          // })
+        }
+        this.plotPopsizes("alive", ["S", "I"])
+      }
+
+      sim.ext.update = function() {
+        this.asynchronous() // Applied as many times as it can in 1/60th of a second
+      }
+
+      function shuffle(a) {
+        var j, x, i
+        for (i = a.length - 1; i > 0; i--) {
+          j = Math.floor(sim.rng.genrand_real2() * (i + 1))
+          x = a[i]
+          a[i] = a[j]
+          a[j] = x
+        }
+        return a
+      }
+
+      function gaussianRandom() {
+        // mean 0, std dev 1
+        let u1 = sim.rng.genrand_real1();
+        let u2 = sim.rng.genrand_real1();
+
+        // avoid log(0)
+        u1 = Math.max(u1, Number.EPSILON);
+
+        return Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+      }
+
+      function gaussianStep(A, D, min, max) {
+        let step = D * gaussianRandom();
+        let newA = A + step;
+
+        // 3. truncate to [0, 1]
+        return Math.min(max, Math.max(min, newA));
+      }
+
+      sim.addButton("Pause/continue", function () { sim.toggle_play() })
+      sim.addButton("Well-mix", function () { sim.mixhosts = !sim.mixhosts})
+
+      sim.addSlider("e",0,1,0.01,"Provirus excision probability")
+      sim.addSlider("diff_rate",0,1,0.01,"Free virus diffusion probability")
+      sim.addSlider("decay_rate",0,1,0.01,"Free virus decay probability")
+      sim.addSlider("muA",0,0.01,0.0001,"Mutation probability")
+      sim.addSlider("c_alpha",0,1,0.01,"Cost of cooperation")
+      sim.addSlider("r",0,1,0.01,"Intrisic virus replication probability")
+      sim.addSlider("latency",1,50,1,"Replication period")
+
+      sim.start()
+    }
+
+    /*-------------------------End user-defined code ---------------------*/
+</script>
+
+<body onload="cacatoo()">
+<div class="header" id="header">
+    <h2>Cacatoo</h2>
+</div>
+<div class="content" id="movie">
+<div class="content" id="canvas_holder">
+    <center>
+        <div style="width:40%;">
+    </center>
+</div>
+<div class="content" id="graph_holder"> </div>
+</div>
+<div class="content" id="form_holder"></div>
+<!-- <figure>
+  <div class="figure-title">Model overview</div>
+  <img src="model.png" alt="Model illustration" width="800">
+  <figcaption>(A) Phage lifecycle (B) Genotype space - each grid point is coloured based on the genotype of the cell and black for empty space (C) Expression of cooperative trait with privatisation (D) Mutations </figcaption>
+</figure> -->
+<div class="footer" id="footer"></div>
+</body>
+
+</html>
