@@ -67,12 +67,12 @@ if __name__ == "__main__":
     plt.rcParams.update({'font.size': 14})
     fig, ax = plt.subplots(figsize=(6, 4), dpi=400)
     n = plot_timeseries(
-        ax, "cA1GT0GR0seed{seed}.txt", c=1.0,
-        data_dir="sweep_2oct26", muA="0.1", mustep="0.1")
+        ax, "cA0.5GT0GR0seed{seed}.txt", c=0.5,
+        data_dir="sweep_without_mutation", muA="0.1", mustep="0.1")
     print(f"Plotted {n} replicates")
     ax.set_xlabel("Time")
     ax.set_ylabel(r"Cooperation, $\alpha$")
     # ax.legend(loc="upper right", frameon=True)
     plt.tight_layout()
     # plt.show()
-    plt.savefig("timeseries_overlay_c1.png", dpi=400)
+    plt.savefig("timeseries_overlay_c0.5.png", dpi=400)

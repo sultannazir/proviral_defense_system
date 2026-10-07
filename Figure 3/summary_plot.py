@@ -26,7 +26,7 @@ max_half_width = 0.035
 
 for cA in cA_values:
     for seed in seeds:
-        fname = f"sweep_2oct26/cA{cA}GT0GR0seed{seed+1}.txt"
+        fname = f"sweep_without_mutation/cA{cA}GT0GR0seed{seed+1}.txt"
         with open(fname, "r") as f:
             lines = [json.loads(x) for x in f.readlines()]
         if len(lines) < 100:
@@ -158,4 +158,4 @@ ax.set_ylim(0, 1)
 
 plt.tight_layout()
 # plt.show()
-plt.savefig("summary_plot_unmix_2oct.png", dpi=400)
+plt.savefig("summary_plot_unmix.png", dpi=400)

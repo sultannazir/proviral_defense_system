@@ -5,7 +5,7 @@ from timeseries_overlay import plot_timeseries   # imports the module made earli
 plt.rcParams.update({'font.size': 14})
  
 # ---- Settings -------------------------------------------------------------
-DATA_DIR  = "mu_sweep_6oct26"
+DATA_DIR  = "sweep_with_mutation"
 TEMPLATE  = "muA{muA}mustep{mustep}cA0.8GT0GR0seed{seed}.txt"
 SEEDS     = range(1, 21)
 ALPHA_REP = 0.12
