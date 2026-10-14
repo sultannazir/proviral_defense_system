@@ -1,0 +1,10 @@
+numba==0.67.0
+numpy==2.4.6
+llvmlite==0.49.0
+matplotlib==3.10.0
+pandas==2.2.3
+pygame==2.6.1
+# developed on python 3.13.5, arm64
+# The model no longer depends on these versions: the generator uses
+# unsigned arithmetic, so it is reproducible across numba versions
+# and CPUs. Verified against numba 0.61.2 and 0.67.0.
